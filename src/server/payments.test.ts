@@ -178,3 +178,88 @@ it("provides only read tools and isolates tool callers", async () => {
   await callTool(tools, "list_payment_links", {}, { user: { id: "bob" } });
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("creates a draft using the scoped token and exact amount", async () => {
+  await connected();
+  const link = {
+    id: merchantId,
+    itemName: "Example",
+    mode: "test",
+    active: true,
+    prices: [{ network: "polygon", currencyToken: "USDC", amount: "1.01" }],
+  };
+  reply({ paymentLink: link });
+  expect(
+    await service.createLink("alice", {
+      itemName: "Example",
+      network: "polygon",
+      currencyToken: "USDC",
+      amount: "1.01",
+      liveConfirmed: false,
+    }),
+  ).toEqual(link);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).prices[0].amount).toBe(
+    "1.01",
+  );
+  expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(
+    "Bearer private-token",
+  );
+});
+it("strips customer contact details from payment responses", async () => {
+  await connected();
+  reply({
+    items: [
+      {
+        id: merchantId,
+        itemName: "Example",
+        status: "paid",
+        amount: "1",
+        currencyToken: "USDC",
+        network: "polygon",
+        createdAt: expiresAt,
+        customerEmail: "private@example.com",
+        recipientWallet: "private-wallet",
+      },
+    ],
+  });
+  const result = JSON.stringify(await service.listPayments("alice"));
+  expect(result).not.toContain("private@example.com");
+  expect(result).not.toContain("private-wallet");
+});
+it("revokes a stale live approval instead of attaching it to a newer test connection", async () => {
+  reply({ deviceCode: "old-device", userCode: "LIVE", expiresAt });
+  await service.connect("alice", {
+    merchantId,
+    mode: "live",
+    liveConfirmed: true,
+  });
+  reply({
+    accessToken: "live-token",
+    expiresAt,
+    mode: "live",
+    scopes: ["integrations:verify", "payment_links:write", "payments:read"],
+  });
+  fetchMock.mockImplementationOnce(async () => {
+    await (state.db as ReturnType<typeof drizzle>)
+      .update(schema.connections)
+      .set({
+        mode: "test",
+        ciphertext: await seal("new-device", state.secret, "alice"),
+        userCode: "NEW",
+      });
+    return new Response(JSON.stringify({ merchant: { id: merchantId } }));
+  });
+  reply({ ok: true });
+  await expect(service.finish("alice")).rejects.toThrow(
+    "unused credential was revoked",
+  );
+  expect(await service.status("alice")).toMatchObject({
+    state: "pending",
+    mode: "test",
+    userCode: "NEW",
+  });
+  expect(fetchMock.mock.calls.at(-1)?.[1]).toMatchObject({
+    method: "DELETE",
+    headers: { Authorization: "Bearer live-token" },
+  });
+});

@@ -35,7 +35,7 @@ Test mode isolates **writes**, not payment history: the payment list may include
 ```sh
 pnpm install --frozen-lockfile
 # Add CONNECTION_ENCRYPTION_KEY to a gitignored .dev.vars file.
-everyapp dev --json
+everyapp dev
 pnpm test
 pnpm types:check
 pnpm build

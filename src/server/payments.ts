@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "cloudflare:workers";
 import { db } from "@/db";
@@ -68,10 +68,24 @@ export async function connect(
     expiresAt: result.expiresAt,
     ciphertext: await seal(result.deviceCode, secret(), userId),
   };
-  await db
+  const saved = await db
     .insert(connections)
     .values(row)
-    .onConflictDoUpdate({ target: connections.userId, set: row });
+    .onConflictDoUpdate({
+      target: connections.userId,
+      set: row,
+      setWhere: old
+        ? and(
+            eq(connections.state, "pending"),
+            eq(connections.ciphertext, old.ciphertext),
+          )
+        : eq(connections.ciphertext, ""),
+    })
+    .returning({ userId: connections.userId });
+  if (!saved.length)
+    throw new Error(
+      "Connection changed in another tab. Refresh before continuing.",
+    );
   return status(userId);
 }
 async function credential(userId: string) {
@@ -125,7 +139,7 @@ export async function finish(userId: string) {
     throw new Error(
       "The approved connection did not match the request. Revoke it in NervixPay and reconnect.",
     );
-  await db
+  const saved = await db
     .update(connections)
     .set({
       ciphertext: await seal(result.accessToken, secret(), userId),
@@ -133,7 +147,26 @@ export async function finish(userId: string) {
       userCode: null,
       state: "connected",
     })
-    .where(eq(connections.userId, userId));
+    .where(
+      and(
+        eq(connections.userId, userId),
+        eq(connections.ciphertext, row.ciphertext),
+        eq(connections.state, "pending"),
+      ),
+    )
+    .returning({ userId: connections.userId });
+  if (!saved.length) {
+    await api(
+      "/api/v1/credential",
+      z.object({ ok: z.boolean() }),
+      result.accessToken,
+      undefined,
+      "DELETE",
+    );
+    throw new Error(
+      "Connection changed during approval. The unused credential was revoked. Refresh and reconnect.",
+    );
+  }
   return status(userId);
 }
 export async function disconnect(userId: string) {
@@ -151,7 +184,15 @@ export async function disconnect(userId: string) {
       if (!(error instanceof ApiError && error.status === 401)) throw error;
     }
   }
-  await db.delete(connections).where(eq(connections.userId, userId));
+  if (row)
+    await db
+      .delete(connections)
+      .where(
+        and(
+          eq(connections.userId, userId),
+          eq(connections.ciphertext, row.ciphertext),
+        ),
+      );
 }
 export async function listLinks(userId: string) {
   const { token } = await credential(userId);

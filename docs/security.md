@@ -23,7 +23,7 @@ Disconnect attempts remote self-revocation before local deletion. A 401 permits 
 
 - The app is alpha, and EveryApp is early development. This is not a third-party security audit.
 - A device exchange that succeeds remotely but fails before persistence may require revocation in NervixPay and reconnecting. No refresh-token storage or automatic recovery is implemented.
-- No distributed lock is used for concurrent connection changes from multiple tabs. Use one connection setup at a time. Review/revoke unexpected credentials in NervixPay.
+- Connection changes use compare-and-swap checks so stale tabs cannot overwrite newer credentials. A token whose approval loses a race is revoked; if that remote revocation fails, revoke it in NervixPay.
 - Live writes have no provider idempotency key. On timeout, inspect existing links before retrying.
 - No automatic key rotation. Back up the encryption key separately from D1 and revoke tokens before clearing unrecoverable rows.
 - Operators should apply their own D1 retention/backup policy. Uninstall does not substitute for remote credential revocation.
