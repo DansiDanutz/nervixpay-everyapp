@@ -18,6 +18,7 @@ export const connectInput = z
   );
 export const linkInput = z
   .object({
+    connectionRevision: z.string().regex(/^[0-9a-f]{64}$/),
     itemName: z.string().trim().min(1).max(80),
     network: z.enum(["polygon", "ethereum", "bnb"]),
     currencyToken: z.enum(["USDC", "USDT"]),

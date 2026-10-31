@@ -15,7 +15,7 @@ Status responses omit ciphertext and device/bearer secrets. Payment response sch
 
 Requested scopes: `integrations:verify`, `payment_links:write` (includes link reads), `payments:read`. No webhook management, wallet signing, renewal or transfer permissions. The issued mode, scopes and merchant must match the requested connection. Device approval stays in NervixPay. Tokens expire and are nonrenewable.
 
-Test mode creates non-payable drafts but can read real merchant payment records. Live connection and live link creation each require explicit confirmation. AI tools are read-only in this release. Existing NervixPay account verification, chain support, pricing validation, limits and fees remain authoritative.
+Test mode creates non-payable drafts but can read real merchant payment records. Live connection and live link creation each require explicit confirmation. Live-link confirmation is cleared on detail edits and every submission. Each write includes an opaque digest of the displayed connection; the server rejects stale forms after a reconnection, preventing cross-tab merchant changes from redirecting a write. AI tools are read-only in this release. Existing NervixPay account verification, chain support, pricing validation, limits and fees remain authoritative.
 
 Disconnect attempts remote self-revocation before local deletion. A 401 permits local removal because the credential no longer authenticates. Other revocation errors preserve the local connection for retry.
 

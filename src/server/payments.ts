@@ -23,10 +23,20 @@ export async function connection(userId: string) {
     await db.select().from(connections).where(eq(connections.userId, userId))
   )[0];
 }
+async function connectionRevision(ciphertext: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(ciphertext),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 export async function status(userId: string) {
   const row = await connection(userId);
   return row
     ? {
+        revision: await connectionRevision(row.ciphertext),
         merchantId: row.merchantId,
         mode: row.mode,
         state: row.state,
@@ -220,6 +230,10 @@ export async function createLink(
 ) {
   const data = linkInput.parse(input);
   const { token, row } = await credential(userId);
+  if (data.connectionRevision !== (await connectionRevision(row.ciphertext)))
+    throw new Error(
+      "Connection changed. Refresh and review the merchant before creating a link.",
+    );
   if (row.mode === "live" && !data.liveConfirmed)
     throw new Error("Confirm creation of a real payment link.");
   return (

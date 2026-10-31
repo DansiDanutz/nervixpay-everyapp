@@ -9,3 +9,7 @@
 - `https://nervixpay.live` returned HTTP 200 with Vercel security headers. Root MX records remain Namecheap eforward1–5; SPF remains `v=spf1 include:spf.efwd.registrar-servers.com ~all`.
 
 Pending: merchant-approved test connection on the deployed app, test draft/read/revoke acceptance, installation from the published GitHub release, and EveryApp catalog review. No real payment was attempted. Email delivery was not retested; this task verifies preservation of the existing DNS records.
+
+## Patch 0.1.1
+
+Follow-up review identified stale live-form confirmation, stale merchant selection across tabs, and coupled list failures. Regression tests were added before the fixes. The patch consumes confirmation per submission, rejects writes from replaced connections, and preserves the successful list when the other request fails. Unavailable lists no longer claim to be empty.
