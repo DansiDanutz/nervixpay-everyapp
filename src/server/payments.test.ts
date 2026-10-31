@@ -102,6 +102,7 @@ it("requires explicit live authorization for connection and each write", async (
   await connected("alice", "live");
   await expect(
     service.createLink("alice", {
+      connectionRevision: (await service.status("alice"))!.revision,
       itemName: "Service",
       network: "polygon",
       currencyToken: "USDC",
@@ -122,6 +123,7 @@ it("validates decimal amounts without rounding money", () => {
   ])
     expect(
       linkInput.safeParse({
+        connectionRevision: "a".repeat(64),
         itemName: "Item",
         network: "polygon",
         currencyToken: "USDC",
@@ -130,6 +132,7 @@ it("validates decimal amounts without rounding money", () => {
     ).toBe(false);
   expect(
     linkInput.parse({
+      connectionRevision: "a".repeat(64),
       itemName: "Item",
       network: "polygon",
       currencyToken: "USDC",
@@ -191,6 +194,7 @@ it("creates a draft using the scoped token and exact amount", async () => {
   reply({ paymentLink: link });
   expect(
     await service.createLink("alice", {
+      connectionRevision: (await service.status("alice"))!.revision,
       itemName: "Example",
       network: "polygon",
       currencyToken: "USDC",
@@ -262,4 +266,34 @@ it("revokes a stale live approval instead of attaching it to a newer test connec
     method: "DELETE",
     headers: { Authorization: "Bearer live-token" },
   });
+});
+it("rejects a form approved before the merchant connection changed", async () => {
+  await connected("alice", "live");
+  const old = await service.status("alice");
+  await (state.db as ReturnType<typeof drizzle>)
+    .update(schema.connections)
+    .set({
+      merchantId: "22222222-2222-4222-8222-222222222222",
+      ciphertext: await seal("new-merchant-token", state.secret, "alice"),
+    });
+  reply({
+    paymentLink: {
+      id: merchantId,
+      itemName: "Old form",
+      mode: "live",
+      active: true,
+      prices: [],
+    },
+  });
+  await expect(
+    service.createLink("alice", {
+      itemName: "Old form",
+      network: "polygon",
+      currencyToken: "USDC",
+      amount: "1",
+      liveConfirmed: true,
+      ...{ connectionRevision: old!.revision },
+    }),
+  ).rejects.toThrow("Connection changed");
+  expect(fetchMock).not.toHaveBeenCalled();
 });

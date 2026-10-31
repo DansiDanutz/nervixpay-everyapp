@@ -15,21 +15,33 @@ export const Route = createFileRoute("/")({
     const [home, connection] = await Promise.all([getHome(), getStatus()]);
     let links: Awaited<ReturnType<typeof getLinks>> = [],
       payments: Awaited<ReturnType<typeof getPayments>> = [],
-      loadError = "";
+      linksError = "",
+      paymentsError = "";
     if (connection?.state === "connected") {
-      try {
-        [links, payments] = await Promise.all([getLinks(), getPayments()]);
-      } catch (e) {
-        loadError = e instanceof Error ? e.message : "Could not load payments.";
-      }
+      const [linkResult, paymentResult] = await Promise.allSettled([
+        getLinks(),
+        getPayments(),
+      ]);
+      if (linkResult.status === "fulfilled") links = linkResult.value;
+      else
+        linksError =
+          linkResult.reason instanceof Error
+            ? linkResult.reason.message
+            : "Links unavailable. Try refreshing.";
+      if (paymentResult.status === "fulfilled") payments = paymentResult.value;
+      else
+        paymentsError =
+          paymentResult.reason instanceof Error
+            ? paymentResult.reason.message
+            : "Payment history unavailable. Try refreshing.";
     }
-    return { home, connection, links, payments, loadError };
+    return { home, connection, links, payments, linksError, paymentsError };
   },
   head: () => ({ meta: [{ title: "NervixPay · EveryApp" }] }),
   component: Home,
 });
 function Home() {
-  const { home, connection, links, payments, loadError } =
+  const { home, connection, links, payments, linksError, paymentsError } =
     Route.useLoaderData();
   const router = useRouter();
   const [busy, setBusy] = useState(false),
@@ -62,9 +74,9 @@ function Home() {
         <small>{home.email}</small>
       </header>
       <div aria-live="polite">{busy && <p>Working…</p>}</div>
-      {(error || loadError) && (
+      {error && (
         <p role="alert" className="error">
-          {error || loadError}
+          {error}
         </p>
       )}
       <section>
@@ -193,12 +205,26 @@ function Home() {
                 : "This creates a checkout link. It does not send funds or sign a transaction."}
             </p>
             <form
+              key={connection.revision}
+              onInput={(e) => {
+                if ((e.target as HTMLInputElement).name !== "liveConfirmed") {
+                  const approval = e.currentTarget.elements.namedItem(
+                    "liveConfirmed",
+                  ) as HTMLInputElement | null;
+                  if (approval) approval.checked = false;
+                }
+              }}
               onSubmit={(e) => {
                 e.preventDefault();
                 const form = new FormData(e.currentTarget);
+                const approval = e.currentTarget.elements.namedItem(
+                  "liveConfirmed",
+                ) as HTMLInputElement | null;
+                if (approval) approval.checked = false;
                 void change(() =>
                   createLink({
                     data: {
+                      connectionRevision: connection.revision,
                       itemName: String(form.get("itemName")),
                       amount: String(form.get("amount")),
                       network: form.get("network") as
@@ -271,7 +297,13 @@ function Home() {
                 Refresh
               </button>
             </div>
-            {!links.length && <p>No links yet.</p>}
+            {linksError ? (
+              <p role="alert" className="error">
+                {linksError}
+              </p>
+            ) : (
+              !links.length && <p>No links yet.</p>
+            )}
             <ul>
               {links.map((link) => (
                 <li key={link.id}>
@@ -305,7 +337,13 @@ function Home() {
               Latest 20 merchant records. Test connections can read real payment
               history. No customer contact details are displayed.
             </p>
-            {!payments.length && <p>No payments recorded.</p>}
+            {paymentsError ? (
+              <p role="alert" className="error">
+                {paymentsError}
+              </p>
+            ) : (
+              !payments.length && <p>No payments recorded.</p>
+            )}
             <ul>
               {payments.map((payment) => (
                 <li key={payment.id}>
