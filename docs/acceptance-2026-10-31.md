@@ -13,3 +13,7 @@ Pending: merchant-approved test connection on the deployed app, test draft/read/
 ## Patch 0.1.1
 
 Follow-up review identified stale live-form confirmation, stale merchant selection across tabs, and coupled list failures. Regression tests were added before the fixes. The patch consumes confirmation per submission, rejects writes from replaced connections, and preserves the successful list when the other request fails. Unavailable lists no longer claim to be empty.
+
+## Patch 0.1.2
+
+The production page became accessible, but enrollment exposed a runtime incompatibility: Cloudflare Workers rejects the standard `redirect: "error"` option before sending a request. The HTTP helper now uses `manual` and rejects non-success responses, including redirects, without forwarding credentials. A regression simulates the Workers restriction and verifies redirect rejection.
