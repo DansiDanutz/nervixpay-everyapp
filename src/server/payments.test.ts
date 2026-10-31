@@ -1,0 +1,180 @@
+import { fileURLToPath } from "node:url";
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { callTool, listTools } from "@every-app/sdk/testing";
+import * as schema from "@/db/schema";
+import { seal, unseal } from "./crypto";
+import { api, connectInput, linkInput } from "./api";
+import { z } from "zod";
+const state = vi.hoisted(() => ({
+  db: null as unknown,
+  secret: btoa("x".repeat(32)),
+}));
+vi.mock("@/db", () => ({
+  get db() {
+    return state.db;
+  },
+}));
+vi.mock("cloudflare:workers", () => ({
+  env: { CONNECTION_ENCRYPTION_KEY: state.secret },
+}));
+const service = await import("./payments");
+const { tools } = await import("@/tools");
+const merchantId = "11111111-1111-4111-8111-111111111111";
+const expiresAt = "2099-01-01T00:00:00Z";
+const fetchMock = vi.fn();
+function reply(body: unknown, status = 200) {
+  fetchMock.mockResolvedValueOnce(
+    new Response(JSON.stringify(body), { status }),
+  );
+}
+async function connected(userId = "alice", mode: "test" | "live" = "test") {
+  await (state.db as ReturnType<typeof drizzle>)
+    .insert(schema.connections)
+    .values({
+      userId,
+      merchantId,
+      mode,
+      state: "connected",
+      expiresAt,
+      ciphertext: await seal("private-token", state.secret, userId),
+    });
+}
+beforeEach(async () => {
+  const db = drizzle(createClient({ url: ":memory:" }), { schema });
+  await migrate(db, {
+    migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
+  });
+  state.db = db;
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+});
+afterEach(() => vi.unstubAllGlobals());
+it("encrypts credentials and binds ciphertext to the owner", async () => {
+  const value = await seal("private-token", state.secret, "alice");
+  expect(value).not.toContain("private-token");
+  expect(await unseal(value, state.secret, "alice")).toBe("private-token");
+  await expect(unseal(value, state.secret, "bob")).rejects.toThrow();
+  await expect(unseal(value, btoa("y".repeat(32)), "alice")).rejects.toThrow();
+});
+it("scopes reads, cancellation and status to the SDK user", async () => {
+  await connected();
+  expect(await service.status("bob")).toBeNull();
+  await expect(service.listLinks("bob")).rejects.toThrow("Connect");
+  await service.disconnect("bob");
+  expect(await service.status("alice")).toMatchObject({ state: "connected" });
+  expect(JSON.stringify(await service.status("alice"))).not.toContain(
+    "ciphertext",
+  );
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+it("completes device approval without exposing secrets", async () => {
+  reply({ deviceCode: "private-device", userCode: "ABCD-1234", expiresAt });
+  await service.connect("alice", {
+    merchantId,
+    mode: "test",
+    liveConfirmed: false,
+  });
+  const pending = await service.status("alice");
+  expect(pending).toMatchObject({ userCode: "ABCD-1234", state: "pending" });
+  expect(JSON.stringify(pending)).not.toContain("private-device");
+  reply({
+    accessToken: "private-token",
+    expiresAt,
+    mode: "test",
+    scopes: ["integrations:verify", "payment_links:write", "payments:read"],
+  });
+  reply({ merchant: { id: merchantId } });
+  expect(await service.finish("alice")).toMatchObject({
+    state: "connected",
+    userCode: null,
+  });
+  expect(JSON.stringify(await service.status("alice"))).not.toContain(
+    "private-token",
+  );
+});
+it("requires explicit live authorization for connection and each write", async () => {
+  expect(connectInput.safeParse({ merchantId, mode: "live" }).success).toBe(
+    false,
+  );
+  await connected("alice", "live");
+  await expect(
+    service.createLink("alice", {
+      itemName: "Service",
+      network: "polygon",
+      currencyToken: "USDC",
+      amount: "10",
+      liveConfirmed: false,
+    }),
+  ).rejects.toThrow("Confirm");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+it("validates decimal amounts without rounding money", () => {
+  for (const amount of [
+    "0",
+    "0.000",
+    "-1",
+    "1e4",
+    "NaN",
+    "1.1234567890123456789",
+  ])
+    expect(
+      linkInput.safeParse({
+        itemName: "Item",
+        network: "polygon",
+        currencyToken: "USDC",
+        amount,
+      }).success,
+    ).toBe(false);
+  expect(
+    linkInput.parse({
+      itemName: "Item",
+      network: "polygon",
+      currencyToken: "USDC",
+      amount: "0.000000000000000001",
+    }).amount,
+  ).toBe("0.000000000000000001");
+});
+it("retains the connection if remote revocation fails", async () => {
+  await connected();
+  reply({ error: "down" }, 503);
+  await expect(service.disconnect("alice")).rejects.toThrow();
+  expect(await service.status("alice")).not.toBeNull();
+});
+it("rejects a grant for a different merchant", async () => {
+  reply({ deviceCode: "private-device", userCode: "ABCD", expiresAt });
+  await service.connect("alice", {
+    merchantId,
+    mode: "test",
+    liveConfirmed: false,
+  });
+  reply({
+    accessToken: "wrong-token",
+    expiresAt,
+    mode: "test",
+    scopes: ["integrations:verify", "payment_links:write", "payments:read"],
+  });
+  reply({ merchant: { id: "another-merchant" } });
+  await expect(service.finish("alice")).rejects.toThrow("did not match");
+  expect(await service.status("alice")).toMatchObject({ state: "pending" });
+});
+it("does not retry writes or expose upstream error bodies", async () => {
+  reply({ secret: "sensitive-upstream" }, 500);
+  await expect(
+    api("/api/v1/payment-links", z.object({}), "private-token", {}),
+  ).rejects.toThrow("(500)");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][1].redirect).toBe("error");
+});
+it("provides only read tools and isolates tool callers", async () => {
+  const result = await listTools(tools);
+  expect(result.tools.map((t) => [t.name, t.risk])).toEqual([
+    ["list_payment_links", "read"],
+    ["list_payments", "read"],
+  ]);
+  await connected();
+  await callTool(tools, "list_payment_links", {}, { user: { id: "bob" } });
+  expect(fetchMock).not.toHaveBeenCalled();
+});

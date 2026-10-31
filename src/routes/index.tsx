@@ -1,264 +1,326 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { getHome } from "@/serverFunctions/home";
 import {
-  createTodo,
-  deleteTodo,
-  getTodos,
-  updateTodo,
-} from "@/serverFunctions/todos";
-
+  getStatus,
+  connect,
+  finish,
+  disconnect,
+  getLinks,
+  getPayments,
+  createLink,
+} from "@/serverFunctions/payments";
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const [home, todos] = await Promise.all([getHome(), getTodos()]);
-    return { home, todos };
+    const [home, connection] = await Promise.all([getHome(), getStatus()]);
+    let links: Awaited<ReturnType<typeof getLinks>> = [],
+      payments: Awaited<ReturnType<typeof getPayments>> = [],
+      loadError = "";
+    if (connection?.state === "connected") {
+      try {
+        [links, payments] = await Promise.all([getLinks(), getPayments()]);
+      } catch (e) {
+        loadError = e instanceof Error ? e.message : "Could not load payments.";
+      }
+    }
+    return { home, connection, links, payments, loadError };
   },
-  // The manifest's name, which the server read from env.EVERYAPP_MANIFEST.
-  head: ({ loaderData }) => ({
-    meta: loaderData ? [{ title: loaderData.home.name }] : [],
-  }),
+  head: () => ({ meta: [{ title: "NervixPay · EveryApp" }] }),
   component: Home,
 });
-
 function Home() {
-  const { home, todos } = Route.useLoaderData();
-  const { user, name, allowed, members, launcher } = home;
+  const { home, connection, links, payments, loadError } =
+    Route.useLoaderData();
   const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  // A change goes to a server function; the loader then reads the list again.
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const [mode, setMode] = useState<"test" | "live">("test");
   async function change(work: () => Promise<unknown>) {
-    setError(null);
+    if (busy) return;
+    setBusy(true);
+    setError("");
     try {
       await work();
       await router.invalidate();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That didn't work.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
     }
   }
-
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{name}</h1>
-        <a
-          href={launcher}
-          className="text-sm text-blue-700 underline dark:text-blue-400"
-        >
-          All apps
+    <main>
+      <header>
+        <a className="back" href={home.launcher} aria-label="Back to EveryApp">
+          ‹ EveryApp
         </a>
+        <span className="eyebrow">PAYMENTS, CONNECTED</span>
+        <h1>
+          NervixPay<span className="badge">Alpha</span>
+        </h1>
+        <p>Create payment links. See what has arrived.</p>
+        <small>{home.email}</small>
       </header>
-
-      <section className={card}>
-        <h2 className={heading}>This app</h2>
-        <p>
-          A todo list, for now. To make it something else, open its folder in a
-          coding agent (Claude Code, Codex or Cursor) and say what it should
-          become:
+      <div aria-live="polite">{busy && <p>Working…</p>}</div>
+      {(error || loadError) && (
+        <p role="alert" className="error">
+          {error || loadError}
         </p>
-        <blockquote className="border-l-2 border-neutral-300 pl-3 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300">
-          Turn this into a shared todo list for my household, with separate
-          lists for groceries and chores.
-        </blockquote>
-        <p className={note}>
-          The agent already knows EveryApp. The folder carries the{" "}
-          <code>{BUILD_SKILL}</code> skill: how to build one, with patterns from
-          real apps.
-        </p>
-        {typeof members === "number" && (
-          <p className={note}>{whoCanOpen(members)}</p>
-        )}
-      </section>
-
-      <section className={card}>
-        <h2 className={heading}>You</h2>
-        <p className="font-medium">
-          {user.email}
-          <span className="text-neutral-500">
-            {" "}
-            · {user.orgRole} of {user.orgId}
-          </span>
-        </p>
-        <p className={note}>
-          You signed in at the Gateway. It tells this app who you are, signed so
-          the app can trust it. The app has no login of its own.
-        </p>
-      </section>
-
-      <section className={card}>
-        <h2 className={heading}>What this app was allowed</h2>
-        <p className={note}>
-          Listed in <code>everyapp.config.ts</code>. The app gets only what that
-          file lists; the Gateway refuses the rest.
-        </p>
-        <dl className="flex flex-col gap-3 text-sm sm:grid sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-2">
-          <Allowed term="resources" items={allowed.resources}>
-            Storage of its own; the todos live in the database.
-          </Allowed>
-          <Allowed term="public" items={allowed.public} link>
-            Reachable without signing in, for a provider's webhook or an OAuth
-            callback. Every route not listed needs a signed-in member.
-          </Allowed>
-          <Allowed term="providers" items={allowed.providers}>
-            AI models the Gateway calls for the app, with a key you add once.
-          </Allowed>
-          <Allowed term="capabilities" items={allowed.capabilities}>
-            What the Gateway does for the app with keys it holds;{" "}
-            {typeof members === "number" ? (
-              <>
-                <code>members</code> is how this page knows who can open it.
-              </>
-            ) : (
-              <>
-                the Gateway refused <code>listMembers()</code>:{" "}
-                <code>{members.refused}</code>.
-              </>
-            )}
-          </Allowed>
-          <Allowed term="secrets" items={allowed.secrets}>
-            Keys only this app uses.
-          </Allowed>
-          <Allowed term="tools" items={allowed.tools}>
-            What an AI assistant may do here, through your Gateway (
-            <code>src/tools.ts</code>). A destructive one stays hidden until the
-            Gateway has approvals.
-          </Allowed>
-        </dl>
-      </section>
-
-      <section className={card}>
-        <h2 className={heading}>Todos</h2>
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const next = title.trim();
-            if (!next) return;
-            setTitle("");
-            void change(() => createTodo({ data: { title: next } }));
-          }}
-        >
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="New todo"
-            aria-label="New todo"
-            className="flex-1 rounded-lg border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white"
-          >
-            Add
-          </button>
-        </form>
-        {error && (
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-        )}
-        <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
-          {todos.map((todo) => (
-            <li key={todo.id} className="flex items-center gap-3 py-2">
-              <input
-                type="checkbox"
-                checked={todo.completed}
-                aria-label={`Done: ${todo.title}`}
-                onChange={(event) =>
-                  change(() =>
-                    updateTodo({
-                      data: { id: todo.id, completed: event.target.checked },
-                    }),
-                  )
-                }
-                className="size-4 accent-blue-600"
-              />
-              <span
-                className={
-                  todo.completed
-                    ? "flex-1 text-neutral-500 line-through"
-                    : "flex-1"
-                }
+      )}
+      <section>
+        <h2>Your connection</h2>
+        {connection?.state === "connected" ? (
+          <>
+            <p>
+              <strong className="badge">{connection.mode.toUpperCase()}</strong>{" "}
+              Merchant <code>{connection.merchantId}</code>
+            </p>
+            <p>
+              Access expires {new Date(connection.expiresAt).toLocaleString()}.
+              Disconnect and approve again to renew.
+            </p>
+            <button disabled={busy} onClick={() => void change(disconnect)}>
+              Disconnect and revoke access
+            </button>
+          </>
+        ) : (
+          <>
+            <p>
+              Find your merchant ID in{" "}
+              <a
+                href="https://nervixpay.live/integrations"
+                target="_blank"
+                rel="noreferrer"
               >
-                {todo.title}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  change(() => deleteTodo({ data: { id: todo.id } }))
-                }
-                className="text-sm text-neutral-500 hover:text-red-600"
-              >
-                Delete
+                NervixPay → Integrations
+              </a>
+              . Your connection is private to your EveryApp account.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = new FormData(e.currentTarget);
+                void change(() =>
+                  connect({
+                    data: {
+                      merchantId: String(form.get("merchantId")),
+                      mode,
+                      liveConfirmed: form.get("liveConfirmed") === "on",
+                    },
+                  }),
+                );
+              }}
+            >
+              <label>
+                Merchant ID
+                <input
+                  required
+                  name="merchantId"
+                  placeholder="Merchant UUID"
+                  defaultValue={connection?.merchantId}
+                />
+              </label>
+              <label>
+                Connection mode
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as "test" | "live")}
+                >
+                  <option value="test">Test — draft links only</option>
+                  <option value="live">Live — real checkout links</option>
+                </select>
+              </label>
+              {mode === "live" && (
+                <label className="check">
+                  <input type="checkbox" name="liveConfirmed" required />I
+                  authorize creation of real checkout links. Customers can pay
+                  them.
+                </label>
+              )}
+              <button disabled={busy} type="submit">
+                {connection ? "Get a new approval code" : "Connect NervixPay"}
               </button>
-            </li>
-          ))}
-        </ul>
-        {todos.length === 0 && (
-          <p className={note}>
-            Nothing yet. Add one above, or ask your AI client to.
-          </p>
+            </form>
+            {connection?.state === "pending" && (
+              <aside>
+                <h3>Approve this code in NervixPay</h3>
+                <p className="code">{connection.userCode}</p>
+                <p>
+                  Expires {new Date(connection.expiresAt).toLocaleString()}.
+                  Check merchant, mode and permissions before approving.
+                </p>
+                <a
+                  href="https://nervixpay.live/integrations"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open NervixPay Integrations ↗
+                </a>
+                <div className="actions">
+                  <button disabled={busy} onClick={() => void change(finish)}>
+                    I've approved — check connection
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() => void change(disconnect)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </aside>
+            )}
+          </>
         )}
       </section>
+      {connection?.state === "connected" && (
+        <>
+          <section>
+            <h2>
+              Create a{" "}
+              {connection.mode === "test" ? "test draft" : "payment link"}
+            </h2>
+            <p>
+              {connection.mode === "test"
+                ? "Test drafts cannot receive payments. They let you try the link workflow safely."
+                : "This creates a checkout link. It does not send funds or sign a transaction."}
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = new FormData(e.currentTarget);
+                void change(() =>
+                  createLink({
+                    data: {
+                      itemName: String(form.get("itemName")),
+                      amount: String(form.get("amount")),
+                      network: form.get("network") as
+                        | "polygon"
+                        | "ethereum"
+                        | "bnb",
+                      currencyToken: form.get("currencyToken") as
+                        | "USDC"
+                        | "USDT",
+                      liveConfirmed: form.get("liveConfirmed") === "on",
+                    },
+                  }),
+                );
+              }}
+            >
+              <label>
+                Item name
+                <input
+                  name="itemName"
+                  required
+                  maxLength={80}
+                  placeholder="Consultation"
+                />
+              </label>
+              <div className="grid">
+                <label>
+                  Amount
+                  <input
+                    name="amount"
+                    required
+                    inputMode="decimal"
+                    maxLength={40}
+                    placeholder="10.00"
+                  />
+                </label>
+                <label>
+                  Token
+                  <select name="currencyToken">
+                    <option>USDC</option>
+                    <option>USDT</option>
+                  </select>
+                </label>
+                <label>
+                  Network
+                  <select name="network">
+                    <option value="polygon">Polygon</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="bnb">BNB Chain</option>
+                  </select>
+                </label>
+              </div>
+              {connection.mode === "live" && (
+                <label className="check">
+                  <input type="checkbox" name="liveConfirmed" required />
+                  Create a live checkout link for this amount and network.
+                </label>
+              )}
+              <button disabled={busy} type="submit">
+                Create {connection.mode === "test" ? "test draft" : "live link"}
+              </button>
+            </form>
+          </section>
+          <section>
+            <div className="actions">
+              <h2>Your links</h2>
+              <button
+                disabled={busy}
+                onClick={() => void change(() => router.invalidate())}
+              >
+                Refresh
+              </button>
+            </div>
+            {!links.length && <p>No links yet.</p>}
+            <ul>
+              {links.map((link) => (
+                <li key={link.id}>
+                  <strong>{link.itemName}</strong>
+                  <span>
+                    {link.prices
+                      .map(
+                        (p) => `${p.amount} ${p.currencyToken} · ${p.network}`,
+                      )
+                      .join(" / ")}
+                  </span>
+                  {link.mode === "live" ? (
+                    <a
+                      href={`https://nervixpay.live/l/${link.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open checkout ↗
+                    </a>
+                  ) : (
+                    <small>Test draft · not payable</small>
+                  )}
+                  <small>{link.active ? "Active" : "Inactive"}</small>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section>
+            <h2>Recent payments</h2>
+            <p>
+              Latest 20 merchant records. Test connections can read real payment
+              history. No customer contact details are displayed.
+            </p>
+            {!payments.length && <p>No payments recorded.</p>}
+            <ul>
+              {payments.map((payment) => (
+                <li key={payment.id}>
+                  <strong>{payment.itemName}</strong>
+                  <span>
+                    {payment.amount} {payment.currencyToken} · {payment.network}
+                  </span>
+                  <span>{payment.status}</span>
+                  <small>{new Date(payment.createdAt).toLocaleString()}</small>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
+      <footer>
+        Powered by your NervixPay merchant account. No custody, wallet signing
+        or automatic transfers.
+        <br />
+        <a href="https://nervixpay.live/docs" target="_blank" rel="noreferrer">
+          NervixPay documentation
+        </a>
+      </footer>
     </main>
   );
 }
-
-/** One line of the Allowed card: a manifest field, what it lists, and what that means. */
-function Allowed({
-  term,
-  items,
-  link,
-  children,
-}: {
-  term: string;
-  items: readonly string[];
-  link?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    // One block on a phone; on wider screens the dt and dd join the grid.
-    <div className="sm:contents">
-      <dt className="font-mono text-neutral-500">{term}</dt>
-      <dd className="min-w-0">
-        <p>
-          {items.length === 0 ? (
-            <span className="text-neutral-500">none</span>
-          ) : (
-            items.map((item) => (
-              <Fragment key={item}>
-                {link ? (
-                  <a href={item} className="underline">
-                    {item}
-                  </a>
-                ) : (
-                  <code>{item}</code>
-                )}{" "}
-              </Fragment>
-            ))
-          )}
-        </p>
-        <p className="text-neutral-500">{children}</p>
-      </dd>
-    </div>
-  );
-}
-
-/** The members count as a sentence; `listMembers()` counts the signed-in person. */
-function whoCanOpen(members: number): string {
-  return members === 1
-    ? "You alone can open it."
-    : `${members} people can open it.`;
-}
-
-// The build skill `everyapp create` copies into a new app, where coding agents
-// look for it. A convention of the CLI (packages/cli/src/lib/app/skill.ts), not
-// a manifest field, so the page names it as a constant; a test in the CLI
-// (packages/cli/src/lib/app/starterSkills.test.ts) holds it to the skills the
-// CLI ships.
-const BUILD_SKILL = "build-every-app";
-
-const card =
-  "flex flex-col gap-2 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800";
-const heading =
-  "text-xs font-semibold uppercase tracking-wide text-neutral-500";
-const note = "text-sm text-neutral-500";

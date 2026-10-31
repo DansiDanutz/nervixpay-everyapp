@@ -1,13 +1,10 @@
-import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-
-export const todos = sqliteTable("todos", {
-  id: text("id").primaryKey(),
-  // The Gateway's user id (`user.id`); every query filters by it.
-  userId: text("user_id").notNull(),
-  title: text("title").notNull(),
-  completed: integer("completed", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`(current_timestamp)`),
+import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+export const connections = sqliteTable("connections", {
+  userId: text("user_id").primaryKey(),
+  merchantId: text("merchant_id").notNull(),
+  mode: text("mode", { enum: ["test", "live"] }).notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  state: text("state", { enum: ["pending", "connected"] }).notNull(),
+  userCode: text("user_code"),
+  expiresAt: text("expires_at").notNull(),
 });
