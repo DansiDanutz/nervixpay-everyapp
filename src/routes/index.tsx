@@ -76,8 +76,12 @@ function Home() {
               Merchant <code>{connection.merchantId}</code>
             </p>
             <p>
-              Access expires {new Date(connection.expiresAt).toLocaleString()}.
-              Disconnect and approve again to renew.
+              Access expires{" "}
+              {new Date(connection.expiresAt)
+                .toISOString()
+                .replace("T", " ")
+                .replace(".000Z", " UTC")}
+              . Disconnect and approve again to renew.
             </p>
             <button disabled={busy} onClick={() => void change(disconnect)}>
               Disconnect and revoke access
@@ -146,8 +150,12 @@ function Home() {
                 <h3>Approve this code in NervixPay</h3>
                 <p className="code">{connection.userCode}</p>
                 <p>
-                  Expires {new Date(connection.expiresAt).toLocaleString()}.
-                  Check merchant, mode and permissions before approving.
+                  Expires{" "}
+                  {new Date(connection.expiresAt)
+                    .toISOString()
+                    .replace("T", " ")
+                    .replace(".000Z", " UTC")}
+                  . Check merchant, mode and permissions before approving.
                 </p>
                 <a
                   href="https://nervixpay.live/integrations"
@@ -306,7 +314,12 @@ function Home() {
                     {payment.amount} {payment.currencyToken} · {payment.network}
                   </span>
                   <span>{payment.status}</span>
-                  <small>{new Date(payment.createdAt).toLocaleString()}</small>
+                  <small>
+                    {new Date(payment.createdAt)
+                      .toISOString()
+                      .replace("T", " ")
+                      .replace(".000Z", " UTC")}
+                  </small>
                 </li>
               ))}
             </ul>
