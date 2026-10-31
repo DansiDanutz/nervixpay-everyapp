@@ -1,35 +1,53 @@
-# Nervixpay Everyapp
+# NervixPay for EveryApp
 
-A private web app on Cloudflare behind your EveryApp Gateway. The Gateway signs people in; the app gets who they are. It starts as a todo list whose first screen shows who you are and what the app was allowed. Each person sees only their own todos: every query in `src/server/todos.ts` takes the signed-in user's id, and what an app shares between people is up to the app. Tell your coding agent what it should become: the notes it reads are in `AGENTS.md`.
+An open-source companion for creating NervixPay payment links and reading payment status from your own EveryApp Gateway. **Alpha; not an official EveryApp catalog listing.**
 
-## What's here
+Each Gateway member connects their own merchant account. Test mode is the default: links are non-payable drafts. Live mode requires explicit approval in NervixPay and confirmation when creating each link. The app never holds wallet keys, signs transactions, or transfers funds.
 
-The todo list is the example; the rest is the plumbing that makes it an EveryApp app. Replace the example, keep the plumbing.
+## Install
 
-- The example: `src/routes/index.tsx` (the page), `src/serverFunctions/` (what the page calls, each behind the signed-in user: the todos, and in `home.ts` the first screen's facts), `src/server/todos.ts` and its test (the queries), `src/db/schema.ts` and `drizzle/` (the table and its migrations), `src/tools.ts` (the same todos as tools for AI clients), `src/routes/health.ts` (a JSON endpoint without a page; private, like every route not named under `public` in `everyapp.config.ts`).
-- The plumbing: `everyapp.config.ts` (what the app is and what the Gateway allows it), `cloudflare.config.ts` (builds the Worker from it), `src/entry.worker.ts` (wraps the app in `everyApp()`, which verifies what the Gateway sent and serves the tools), `src/db/index.ts`, `src/env.d.ts`, `vite.config.ts`, `drizzle.config.ts`.
-- The shell: `src/routes/__root.tsx`, `src/router.tsx`, `src/styles/app.css`. `src/routeTree.gen.ts` is generated.
-- The skills: `.agents/skills/` and `.claude/skills/`, copies `everyapp create` makes of the CLI's `everyapp` (runs the commands) and `build-every-app` (how to build one, with patterns from real apps). Your coding agent reads them, with `AGENTS.md`.
-
-## Run it
+Requires an existing [EveryApp Gateway](https://everyapp.com/docs/setup), Node.js 22.18+, and a NervixPay merchant account with onboarding completed.
 
 ```sh
-pnpm install   # done by `everyapp create`; needed after a fresh clone
-pnpm dev
+everyapp install https://github.com/DansiDanutz/nervixpay-everyapp --json
 ```
 
-Open the address it prints. You're signed in as a test user. Ctrl+C stops it.
-
-## Put it online
+The app initially shows **Needs setup**. Generate and save a 32-byte base64 encryption key in your password manager, then supply it at the hidden prompt:
 
 ```sh
-pnpm run deploy
+everyapp secret set CONNECTION_ENCRYPTION_KEY --app nervixpay-everyapp
 ```
 
-It prints the app's address and who can open it. Run it again for every change you want live.
+Do not use a merchant API token as the encryption key. Do not paste keys into chat, GitHub, or issue reports. See [setup](docs/setup.md) for generation and connection steps.
 
-The first deploy puts the app's Worker, its D1 database and its hostname with a certificate in your Cloudflare account, then redeploys the Gateway so it serves the app (upgrading the Gateway when your EveryApp checkout is newer than the one online). No Gateway yet? It offers to install one first. Later deploys change only the app. What it all costs: https://everyapp.com/docs#what-it-costs.
+## Included
 
-## Use it from Claude, ChatGPT or Cursor
+- Per-member NervixPay device approval; no passwords or wallet secrets.
+- Test drafts and live share links with fixed USDC/USDT prices on Polygon, Ethereum or BNB Chain (subject to NervixPay support).
+- Latest 20 payment records, with customer contact fields removed.
+- Read-only `list_payment_links` and `list_payments` tools for EveryApp AI clients.
+- Disconnect revokes the scoped credential before deleting it locally.
 
-Its tools are served by your Gateway at `https://<your gateway>/mcp`: https://everyapp.com/docs/connect-ai
+Test mode isolates **writes**, not payment history: the payment list may include real merchant payments. Account fees, supported token/network pairs, verification holds and plan limits remain controlled by NervixPay.
+
+## Development
+
+```sh
+pnpm install --frozen-lockfile
+# Add CONNECTION_ENCRYPTION_KEY to a gitignored .dev.vars file.
+everyapp dev
+pnpm test
+pnpm types:check
+pnpm build
+```
+
+Use Node 22.18+ and the package manager version declared in package.json. SDK/CLI dependencies are pinned by pnpm-lock.yaml. No NervixPay backend, Vercel, DNS, or email changes are required.
+
+## Documentation
+
+- [Setup and troubleshooting](docs/setup.md)
+- [Architecture and security](docs/security.md)
+- [Release and acceptance checklist](docs/release.md)
+- [Catalog proposal](docs/marketplace.md)
+
+MIT licensed. This license covers this companion only; it does not relicense the NervixPay service or source code.
