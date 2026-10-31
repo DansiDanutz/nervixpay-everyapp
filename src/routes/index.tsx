@@ -205,6 +205,7 @@ function Home() {
                 : "This creates a checkout link. It does not send funds or sign a transaction."}
             </p>
             <form
+              key={connection.revision}
               onInput={(e) => {
                 if ((e.target as HTMLInputElement).name !== "liveConfirmed") {
                   const approval = e.currentTarget.elements.namedItem(
