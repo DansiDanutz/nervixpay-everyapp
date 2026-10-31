@@ -74,7 +74,8 @@ export async function api<T>(
   try {
     response = await fetch(ORIGIN + path, {
       method,
-      redirect: "error",
+      // Workers supports manual; non-2xx responses below reject redirects.
+      redirect: "manual",
       signal: AbortSignal.timeout(15000),
       headers: {
         "Content-Type": "application/json",
