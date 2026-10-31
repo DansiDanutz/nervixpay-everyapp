@@ -297,3 +297,13 @@ it("rejects a form approved before the merchant connection changed", async () =>
   ).rejects.toThrow("Connection changed");
   expect(fetchMock).not.toHaveBeenCalled();
 });
+it("uses the Workers-supported redirect mode and refuses redirected credentials", async () => {
+  fetchMock.mockImplementationOnce(async (_url, init) => {
+    if (init.redirect === "error") throw new TypeError("Unsupported redirect mode");
+    return new Response(JSON.stringify({ok:true}));
+  });
+  await expect(api("/api/v1/verify", z.object({ok:z.boolean()}), "private-token")).resolves.toEqual({ok:true});
+  reply({},302);
+  await expect(api("/api/v1/verify",z.object({}),"private-token")).rejects.toThrow("(302)");
+  expect(fetchMock.mock.calls.every(call=>call[1].redirect === "manual")).toBe(true);
+});
